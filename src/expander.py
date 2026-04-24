@@ -12,7 +12,9 @@ from rich.table import Table
 from rich import box
 
 from .config import ANTHROPIC_API_KEY, CLAUDE_MODEL
-from .price_finder import search_naver_shopping
+from .price_finder import search_naver_shopping, naver_competition
+from .scorer import calculate_score
+from .cache import cached
 
 console = Console()
 
@@ -30,6 +32,7 @@ JSON 배열 형태로만 답변하세요. 설명·코드펜스 없이 배열만:
 """
 
 
+@cached("expand", ttl_hours=24 * 7)
 def expand_category(category: str, count: int = 10) -> list[str]:
     """Ask Claude for a list of concrete product keywords."""
     client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
@@ -78,55 +81,83 @@ def price_stats(items: list[dict]) -> dict | None:
 
 
 def expand_with_prices(category: str, count: int = 10) -> list[dict]:
-    """Expand + probe Naver Shopping per keyword. Returns rows with stats."""
+    """Expand + probe Naver Shopping per keyword. Returns rows with stats + score.
+
+    Sorted by score (highest first) so the most promising keywords appear up top.
+    """
     console.print(f"[yellow]'{category}' → {count}개 키워드 생성 중...[/yellow]")
     keywords = expand_category(category, count)
     if not keywords:
         console.print("[red]키워드 생성 실패[/red]")
         return []
 
-    console.print(f"[green]{len(keywords)}개 키워드 확보 → 네이버 가격 조회[/green]")
+    console.print(f"[green]{len(keywords)}개 키워드 확보 → 네이버 가격·경쟁 조사[/green]")
 
     rows: list[dict] = []
     for i, kw in enumerate(keywords, 1):
         console.print(f"  [dim]({i}/{len(keywords)})[/dim] {kw}")
-        items = search_naver_shopping(kw, display=20)
+        items = search_naver_shopping(kw, display=30)
+        stats = price_stats(items)
+        comp = naver_competition(items)
+        score = calculate_score(
+            margin_rate=None,  # 소싱가 미상 → 마진 점수는 중립
+            competition=comp,
+            naver_stats=stats,
+        )
         rows.append({
             "keyword": kw,
             "count": len(items),
-            "stats": price_stats(items),
-            "top": items[:3],  # keep top 3 cheapest for reference
+            "stats": stats,
+            "competition": comp,
+            "score": {
+                "total": score.total,
+                "verdict": score.verdict,
+                "competition": score.competition,
+                "stability": score.stability,
+                "demand": score.demand,
+            },
+            "top": items[:3],
         })
+
+    rows.sort(key=lambda r: r["score"]["total"], reverse=True)
     return rows
 
 
 # ── Rich display ─────────────────────────────────────────────────────────────
 
 def render_expansion(category: str, rows: list[dict]) -> Table:
+    color_map = {
+        "강력 추천": "bold green",
+        "추천": "green",
+        "보통": "yellow",
+        "재고려": "orange1",
+        "비추": "red",
+    }
     t = Table(
-        title=f"[bold]{category} 키워드 확장 (네이버 가격대)[/bold]",
+        title=f"[bold]{category} 키워드 확장 (점수 순)[/bold]",
         box=box.ROUNDED,
     )
     t.add_column("#", style="dim", justify="right")
     t.add_column("키워드", style="cyan")
-    t.add_column("결과", justify="right")
+    t.add_column("점수", justify="right")
+    t.add_column("판정")
+    t.add_column("경쟁", justify="center")
     t.add_column("최저가", style="green", justify="right")
     t.add_column("중앙가", style="yellow", justify="right")
-    t.add_column("평균가", justify="right")
-    t.add_column("최고가", justify="right")
 
     for i, r in enumerate(rows, 1):
-        s = r.get("stats")
-        if s:
-            t.add_row(
-                str(i),
-                r["keyword"],
-                str(r["count"]),
-                f"{s['min']:,}원",
-                f"{s['median']:,}원",
-                f"{s['mean']:,}원",
-                f"{s['max']:,}원",
-            )
-        else:
-            t.add_row(str(i), r["keyword"], str(r["count"]), "-", "-", "-", "-")
+        s = r.get("stats") or {}
+        score = r.get("score", {})
+        comp = r.get("competition", {})
+        verdict = score.get("verdict", "-")
+        color = color_map.get(verdict, "white")
+        t.add_row(
+            str(i),
+            r["keyword"],
+            f"{score.get('total', '-')}",
+            f"[{color}]{verdict}[/{color}]",
+            comp.get("level", "-"),
+            f"{s['min']:,}원" if s else "-",
+            f"{s['median']:,}원" if s else "-",
+        )
     return t

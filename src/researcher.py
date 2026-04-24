@@ -1,6 +1,7 @@
 import anthropic
 from rich.console import Console
 from .config import ANTHROPIC_API_KEY, CLAUDE_MODEL
+from .cache import cached
 
 console = Console()
 
@@ -34,6 +35,7 @@ _RESEARCH_PROMPT = """\
 """
 
 
+@cached("research", ttl_hours=24 * 7)  # trends shift slowly; week-long cache
 def research_trending_products(category: str) -> str:
     """Return Claude's trend analysis for the given category (Korean)."""
     client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)

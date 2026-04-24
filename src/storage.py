@@ -74,6 +74,23 @@ def save_prices(product: str, data: dict) -> tuple[Path, Path]:
             lines.append(f"- 중앙값: **{s['median']:,}원**")
             lines.append(f"- 평균가: **{s['mean']:,}원**")
             lines.append(f"- 최고가: **{s['max']:,}원**")
+        if data.get("competition"):
+            c = data["competition"]
+            lines.append("")
+            lines.append("### 경쟁 강도")
+            lines.append(f"- 강도: **{c.get('level', '-')}**")
+            lines.append(f"- 전체 검색 결과: {c.get('total_results', 0):,}건")
+            lines.append(f"- 판매 쇼핑몰 수(샘플): {c.get('unique_malls', 0)}개")
+            lines.append(f"- 상위 3몰 점유율: {c.get('top3_concentration', 0)*100:.0f}%")
+        if data.get("score"):
+            sc = data["score"]
+            lines.append("")
+            lines.append("### 판매 적합도 점수")
+            lines.append(f"- **{sc.get('total')} / 10 — {sc.get('verdict')}**")
+            lines.append(f"  - 마진성: {sc.get('margin')}")
+            lines.append(f"  - 경쟁성: {sc.get('competition')}")
+            lines.append(f"  - 수요성: {sc.get('demand')}")
+            lines.append(f"  - 가격 안정성: {sc.get('stability')}")
         lines.append("")
 
     overseas = data.get("overseas") or ""
